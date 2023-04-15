@@ -14,7 +14,6 @@ import Control.Monad.Loops(whileJust)
 import Data.Binary.Get
 import qualified Data.Bits as BT
 import qualified Data.ByteString.Lazy as B
-import Data.Int
 import qualified Data.Map as M
 import qualified Data.Text as T
 import Data.Text.Encoding(decodeUtf8, decodeUtf8With)
@@ -143,6 +142,7 @@ loadFormatInfo = do
   case info of
     1 -> return Signed
     2 -> return Unsigned
+    _ -> error "Not supported format info!"
 
 
 loadMasterVolume :: Get (Bool, Int)
@@ -242,8 +242,9 @@ loadInstrument ptr = do
     sampleName <- loadText 28
 
     -- verify 'SCRS' (si el instrumento no esta, la sig. tampoco)
-    sig <- decodeUtf8 <$> getByteString 4
+    --sig <- decodeUtf8 <$> getByteString 4
     --when (sig /= "SCRS") (error $ "Bad signature: " ++ show ptr)
+    skip 4
 
     -- buffer data
     let buffer = undefined

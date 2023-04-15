@@ -7,13 +7,12 @@ import Header
 
 import Colonnade
 import Data.Char(toUpper)
-import Data.List
+import Data.List(sort, sortOn)
+import Fmt
 import qualified Data.Map as M
 import Data.Text(Text)
-import qualified Data.Text as T
-import Fmt
+--import qualified Data.Text as T
 import Numeric(showHex)
-import Text.Printf(printf)
 
 
 
@@ -109,6 +108,8 @@ showNoteVol :: Maybe Int -> String
 showNoteVol Nothing  = "--"
 showNoteVol (Just i) = justifyLeft 2 '0' (map toUpper $ showHex i "")
 
+-- OJO CORREGIR, esto esta mal, solo hay un efecto S, el numero que va detras es
+-- parametro
 effectTable :: [String]
 effectTable = ["A","B","C","D","E","F","G","H","I","J","K","L","M","N",
                "O", "P", "Q", "R", "S0", "S1", "S2","S3","S4","S5",
@@ -149,11 +150,12 @@ normalizeRow :: [Int] -- Ordered channel list
              -> Row   -- Ordered by channel notes
              -> MRow
 normalizeRow [] [] = []
-normalizeRow (c:cs) [] = Nothing:normalizeRow cs []
-normalizeRow (c:cs) ns'@((n@Note{channel=c'}):ns)
-  | c < c'  = Nothing:normalizeRow cs ns'
-  | c == c' = Just n:normalizeRow cs ns
-  | c > c'  = error "Incoherent channel numbers in a row!"
+normalizeRow [] (_:_) = error "Incoherent channel numbers!"
+normalizeRow (_:cs) [] = Nothing:normalizeRow cs []
+normalizeRow (c:cs) ns'@(n:ns)
+  | c < channel n  = Nothing:normalizeRow cs ns'
+  | c == channel n = Just n:normalizeRow cs ns
+  | c > channel n  = error "Incoherent channel numbers in a row!"
 
 
 reportPattern :: [Int]   -- Ordered channel list

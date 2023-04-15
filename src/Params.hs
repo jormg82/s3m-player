@@ -9,8 +9,9 @@ import Options.Applicative
 
 data Params = Params
   {
-    file   :: FilePath,
-    outInfo :: Bool
+    file       :: FilePath,
+    outInfo    :: Bool,
+    sampleRate :: Int
   }
   deriving Show
 
@@ -22,6 +23,12 @@ makeParams =
          <*> switch
                (long "info" <> short 'i' <>
                 help "Output file info")
+         <*> option auto
+               (long "sr" <>
+                help "Sample rate" <>
+                showDefault <>
+                value 22050 <>
+                metavar "INT")
 
 
 cmdLineParser :: IO Params
