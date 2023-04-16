@@ -18,5 +18,5 @@ main = do
     TIO.putStr $ headerReport header
     --print header
   else
-    playFile (P.sampleRate params) header
+    playFile header
 

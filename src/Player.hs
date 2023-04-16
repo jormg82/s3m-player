@@ -8,6 +8,7 @@ import qualified Header as H
 import Control.Monad(replicateM_)
 import Control.Monad.IO.Class(liftIO)
 import Control.Monad.Trans.State(evalStateT, StateT, get, put)
+import qualified Data.Array as A
 import qualified Data.ByteString as B
 import Data.Foldable(traverse_)
 import qualified Data.Map as M
@@ -18,8 +19,18 @@ import System.IO
 type Stream = [Word8]
 type Stream2 = [(Word8, Word8)]
 
+-- Constantes
 zero :: Word8
 zero = 0x80
+
+sampleRate:: Int
+sampleRate = 8363
+
+baseFreq :: Int
+baseFreq = 428
+
+incNumerator :: Float
+incNumerator = fromIntegral $ sampleRate * baseFreq
 
 
 data ChState = ChState
@@ -34,7 +45,6 @@ data ChState = ChState
 data PlState = PlState
   {
     header         :: H.Header, 
-    sampleRate     :: Int,
     speed          :: Int,
     bpm            :: Int,
     hz             :: Int,
@@ -58,9 +68,6 @@ type PS = StateT PlState IO
 
 getHeader :: PS H.Header
 getHeader = header <$> get
-
-getSampleRate :: PS Int
-getSampleRate = sampleRate <$> get
 
 getSpeed :: PS Int
 getSpeed = speed <$> get
@@ -90,10 +97,10 @@ putBpm :: Int -> PS ()
 putBpm n = do
   s <- get
   let hz=calcHz n
-      samplesPerTick=calcSamplesPerTick (sampleRate s) hz
-  put s {speed=n,
-         hz=hz,
-         samplesPerTick=samplesPerTick}
+      samplesPerTick=calcSamplesPerTick hz
+  put s{bpm=n,
+        hz=hz,
+        samplesPerTick=samplesPerTick}
 
 putChState :: Int -> ChState -> PS ()
 putChState nchan chState = do
@@ -101,16 +108,12 @@ putChState nchan chState = do
   put state{chStates=M.insert nchan chState chStates}
 
 
-playFile :: Int      -- Sample rate
-         -> H.Header -- Header
-         -> IO ()
-playFile sr header = do
-  let header=header
-      sampleRate=sr
-      speed=H.initialSpeed header
+playFile :: H.Header -> IO ()
+playFile header = do
+  let speed=H.initialSpeed header
       bpm=H.initialTempo header
       hz=calcHz bpm
-      samplesPerTick=calcSamplesPerTick sr hz 
+      samplesPerTick=calcSamplesPerTick hz 
       chStates=M.map (const initChState) (H.channels header)
 
   evalStateT play PlState{..}
@@ -140,7 +143,7 @@ playRow notes = do
 initRow :: H.Row -> PS ()
 initRow = do
   -- OJO completar inicializacion de info de canales
-  undefined
+  return ()
 
 
 playTick :: PS ()
@@ -153,24 +156,36 @@ playTick = do
 
 playChTick :: Int -> PS Stream2
 playChTick nchan = do
-  spt     <- getSamplesPerTick
-  ChState{..} <- getChannelState nchan
-  case instrument of
-    Nothing -> return $ replicate spt (zero, zero)
-    Just i  -> do
-      inst <- ((M.!i) . H.instruments) <$> getHeader
-      let (chstate', str) = generateChTick spt chstate inst
-      putChState nchan chstate'
-      return str
+  spt <- getSamplesPerTick
+  chstate@ChState{..} <- getChannelState nchan
+  H.Header{..} <- getHeader
+  let maybeins = instrument >>= flip M.lookup instruments
+      (pos, samples) = generateSamples spt samplePos frequence maybeins
+  putChState nchan chstate{samplePos=pos}
+  return samples
+  
 
 
-generateChTick :: Int            -- Samples per tick
-               -> Float          -- Sample pos
-               -> Int            -- Frequence
-               -> H.Instrument   -- Instrument
-               -> (Int, Stream2) -- (New pos, stream)
-generateChTick spt ChState{..} H.Instrument{..} =
-  undefined  
+generateSamples :: Int                -- Samples per tick
+                -> Float              -- Sample pos
+                -> Int                -- Frequence
+                -> Maybe H.Instrument -- Instrument
+                -> (Float, Stream2)   -- (New pos, stream)
+generateSamples spt pos _ Nothing = (pos, replicate spt (zero, zero))
+generateSamples spt pos freq (Just H.Instrument{..}) =
+  (nextpos, map (dupe . (buffer A.!)) positions)
+  where
+    begin     = fromIntegral loopBegin
+    end       = fromIntegral loopEnd + 1
+    len       = end - begin + 1
+    inc       = incNumerator / fromIntegral (freq*c2spd)
+    nextpos   = retarg $ pos+fromIntegral spt*inc
+    positions = map (floor . retarg) [pos, pos+inc..]
+
+    retarg :: Float -> Float
+    retarg pos
+      | pos < end+1 = pos
+      | otherwise = begin + modFloat (pos-end) len
 
 
 
@@ -188,11 +203,6 @@ fmix w1 w2 = fromIntegral $ w1'+w2'
     w1' = fromIntegral w1 :: Int
     w2' = fromIntegral w2 :: Int
 
-
-apply2 :: (a -> a -> b) -> (a, a) -> (a, a) -> (b, b)
-apply2 f (x, y) (z, t) = (f x z, f y t)
-
-
 -- Calcula los ticks por segundo a partir del bpm
 calcHz :: Int -> Int
 calcHz bpm = (2 * bpm) `div` 5
@@ -200,16 +210,17 @@ calcHz bpm = (2 * bpm) `div` 5
 
 -- Calcula los samples por tick a partir del sample rate
 -- y de los hz
-calcSamplesPerTick :: Int -> Int -> Int
-calcSamplesPerTick sr hz = sr `div` hz
+calcSamplesPerTick :: Int -> Int
+calcSamplesPerTick hz = sampleRate `div` hz
 
 
-------------------------------------------------------------
---  Para reproducir:
---  st = B.pack $ A.elems $ buffer ins
---  B.hPut stdout st
-    
+-- Utils
+apply2 :: (a -> a -> b) -> (a, a) -> (a, a) -> (b, b)
+apply2 f (x, y) (z, t) = (f x z, f y t)
 
+dupe :: a -> (a, a)
+dupe x = (x, x)
 
---int2word8 :: Int -> Word8
---int2word8 n = fromIntegral (floor (fromIntegral n*1.0)+0x80)
+modFloat :: Float -> Float -> Float
+modFloat x y = y * snd (properFraction $ x/y)
+
