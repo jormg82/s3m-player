@@ -256,7 +256,7 @@ loadInstrument ptr = do
     skip $ memSeg ins
 
     let len = sampleLength ins
-    ds <- map word82int16 <$> replicateM len getWord8
+    ds <- map word82float <$> replicateM len getWord8
     return ins{buffer=A.array (0, len-1) $ zip [0..] ds}
 
 

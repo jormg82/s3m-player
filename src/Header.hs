@@ -10,8 +10,8 @@ module Header(
   Note(..),
   Instrument(..),
   Header(..),
-  word82int16,
-  int162word8
+  word82float,
+  float2word8
 ) where
 
 
@@ -65,7 +65,7 @@ data Instrument = Instrument
     looped        :: Bool,
     c2spd         :: Int,
     sampleName    :: Text,
-    buffer        :: A.Array Int Int16
+    buffer        :: A.Array Int Float
   }
   deriving Show
 
@@ -95,10 +95,10 @@ data Header = Header
 
 
 -- Expandimos 
-word82int16 :: Word8 -> Int16
-word82int16 n = (fromIntegral n - 0x80) * 16
+word82float :: Word8 -> Float
+word82float n = (fromIntegral n - 128) / 512
 
 
-int162word8 :: Int16 -> Word8
-int162word8 n = fromIntegral (n `div` 64) + 0x80
-
+float2word8 :: Float -> Word8
+float2word8 n = round $ 0x80*(n+1)
+ 

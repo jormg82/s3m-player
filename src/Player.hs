@@ -5,7 +5,7 @@ module Player(playFile, interpolate, retarg) where
 import qualified Header as H
 
 
-import Control.Monad(filterM, replicateM_)
+import Control.Monad(filterM, replicateM_, when)
 import Control.Monad.IO.Class(liftIO)
 import Control.Monad.Trans.State(evalStateT, StateT, get, put)
 import qualified Data.Array as A
@@ -18,15 +18,15 @@ import Data.Word
 import System.IO
 
 
-type Stream = [Int16]
-type Stream2 = [(Int16, Int16)]
+type Stream = [Float]
+type Stream2 = [(Float, Float)]
 
 
 -- Constantes
-zero :: Int16
+zero :: Float
 zero = 0
 
-zero2 :: (Int16, Int16)
+zero2 :: (Float, Float)
 zero2 = (0, 0)
 
 sampleRate:: Int
@@ -37,11 +37,14 @@ sampleRate = 11025
 -- Datos
 data ChState = ChState
   {
-    instrument :: Maybe Int,
-    samplePos  :: Float,
-    frequence  :: Int,
-    volume     :: Maybe Int,
-    pan        :: Int
+    instrument   :: Maybe Int,
+    samplePos    :: Float,
+    frequence    :: Int,
+    volume       :: Int,
+    pan          :: Int,
+    effect       :: Maybe Int,
+    effectParam  :: Maybe Int,
+    lastVolSlide :: Int
   }
   deriving Show
 
@@ -61,11 +64,14 @@ data PlState = PlState
 initChState :: ChState
 initChState = ChState
   {
-    samplePos  = 0,
-    instrument = Nothing,
-    frequence  = 0,
-    volume     = Nothing,
-    pan        = 7
+    samplePos    = 0,
+    instrument   = Nothing,
+    frequence    = 0,
+    volume       = 64,
+    pan          = 7,
+    effect       = Nothing,
+    effectParam  = Nothing,
+    lastVolSlide = 0
   }
 
 
@@ -158,39 +164,52 @@ playPattern pat = do
 playRow :: H.Row -> PS ()
 playRow notes = do
   validNotes <- filterM (channelEnabled . H.channel) notes
-  traverse_ updateChState validNotes
-
-  traverse_ updateNoteEffect validNotes
+  traverse_ updateChNote validNotes
 
   speed <- getSpeed
-  --liftIO $ putStrLn $ "speed vale: " ++ show speed
   replicateM_ speed playTick
 
 
-updateChState :: H.Note -> PS ()
-updateChState H.Note{..} = do
-  -- OJO completar inicializacion de info de canales
+updateChNote :: H.Note -> PS ()
+updateChNote H.Note{..} = do
+
   chstate <- getChannelState channel
-  let chstate'  = case instrument of
-                    Nothing -> chstate
-                    Just i -> chstate{instrument=Just i, samplePos=0}
-      chstate'' = case note of
-                    Nothing -> chstate'
-                    Just n -> chstate'{frequence=note2freq n, volume=noteVol}
+  case instrument of
+    Nothing -> return ()
+    Just i  -> putChState channel chstate{instrument=Just i,
+                                          samplePos=0}
 
-  putChState channel chstate''
-
-
-
-updateNoteEffect :: H.Note -> PS () 
-updateNoteEffect H.Note{..} = do
   chstate <- getChannelState channel
+  let vol = case noteVol of
+              Nothing -> volume chstate
+              Just v  -> v
+  putChState channel chstate{volume=vol,
+                             effect=effect,
+                             effectParam=effectParam}
 
+  chstate <- getChannelState channel
+  case note of
+    Nothing -> return ()
+    Just n -> putChState channel chstate{frequence=note2freq n}
+
+  chstate <- getChannelState channel
   case (effect, effectParam) of
 
     -- Axx (Set Speed)
     (Just 1, Just speed) -> do
       putSpeed speed
+
+    -- Dxy (Volume slide)
+    (Just 4, Just p) -> do
+      let up     = BT.shift p (-4)
+          down   = p BT..&. 0x0F
+          lastVS = max p (lastVolSlide chstate)
+          vol    = case (up, down) of
+                     (_, 0x0F) -> volume chstate+up
+                     (0x0F, _) -> volume chstate-down
+                     _         -> volume chstate
+          vol'   = adjustLimits 0 64 vol
+      putChState channel chstate{volume=vol', lastVolSlide=lastVS}
 
     -- Oxy (Sample offset)
     (Just 15, Just o) -> do
@@ -198,7 +217,7 @@ updateNoteEffect H.Note{..} = do
 
     -- SX- effects
     (Just 19, Just o) -> do
-      let up = BT.shift o (-4)
+      let up   = BT.shift o (-4)
           down = o BT..&. 0x0F
 
       case up of
@@ -222,19 +241,23 @@ updateNoteEffect H.Note{..} = do
 
 playTick :: PS ()
 playTick = do
-  channels <- (M.keys . H.channels) <$> getHeader
+  chTicks <- (zip [0..] . M.keys . H.channels) <$> getHeader
   -- generamos la minima mezcla posible
-  stream <- mix <$> traverse playChTick channels
-  -- OJO reponer
+  stream <- mix <$> traverse playChTick chTicks
   liftIO $ B.hPut stdout $ B.pack stream
-  return ()
 
 
-playChTick :: Int -> PS Stream2
-playChTick nchan = do
+playChTick :: (Int, Int) -> PS Stream2
+playChTick (nchan, numTick) = do
   spt <- getSamplesPerTick
   chstate@ChState{..} <- getChannelState nchan
   H.Header{..} <- getHeader
+
+  -- En los ticks intermedios,
+  -- aplicamos efectos antes de producir samples
+  when (numTick>0) $ updateChTick nchan
+
+  --liftIO $ putStrLn $ "Aqui volume vale: " ++ show volume
 
   let maybeins = instrument >>= flip M.lookup instruments
   case maybeins of
@@ -252,11 +275,9 @@ playChTick nchan = do
           samples = map (interpolate buffer sampleLength) positions
          
           -- aplicamos volumen
-          volVal = case volume of {Nothing -> 64; Just v  -> v}
-          funVol :: Int16 -> Int
-          funVol s =
-            (fromIntegral s * globalVol * insVol * volVal) `div` (64*64*64)
-          samples' = map (fromIntegral . funVol) samples 
+          funVol :: Float -> Float
+          funVol s = s * fromIntegral (globalVol*insVol*volume) / (64*64*64)
+          samples' = map funVol samples 
 
           -- aplicamos panning
           samples'' = map (applyPan pan) samples'
@@ -265,18 +286,37 @@ playChTick nchan = do
       return samples''
 
 
-interpolate :: A.Array Int Int16 -- Buffer
+updateChTick :: Int -> PS ()
+updateChTick nchan = do
+  chstate@ChState{..} <- getChannelState nchan
+  case (effect, effectParam) of
+ 
+    -- Dxy (Volume slide)
+    (Just 4, Just _) -> do
+      let up     = BT.shift lastVolSlide (-4)
+          down   = lastVolSlide BT..&. 0x0F
+          vol    = case (up, down) of
+                     (_, 0x00) -> volume+up
+                     (0x00, _) -> volume-down
+          vol'   = adjustLimits 0 64 vol
+      putChState nchan chstate{volume=vol'}
+
+    -- default case (no implementado o no existente)
+    _ -> return ()
+
+
+interpolate :: A.Array Int Float -- Buffer
             -> Int               -- Buffer length
             -> Float             -- position (0<=, <buffer length)
-            -> Int16
+            -> Float
 interpolate buffer len pos =
   if pos > fromIntegral len then zero
-  else floor $ w1 + (w2-w1) * snd (properFraction pos)
+  else f1 + (f2-f1) * snd (properFraction pos)
   where
     b1 = floor pos `mod` len
     b2 = ceiling pos `mod` len 
-    w1 = fromIntegral $ buffer A.! b1
-    w2 = fromIntegral $ buffer A.! b2
+    f1 = buffer A.! b1
+    f2 = buffer A.! b2
 
 retarg :: Bool -> Float -> Float -> Float -> Float
 retarg looped begin end pos
@@ -285,7 +325,7 @@ retarg looped begin end pos
 
 
 mix :: [Stream2] -> [Word8]
-mix = map H.int162word8
+mix = map H.float2word8
     . concatMap (\(w1, w2) -> [w1, w2])
     . foldr1 (zipWith $ apply2 (+))
 
@@ -302,10 +342,16 @@ calcSamplesPerTick hz = sampleRate `div` hz
 
 
 -- Utils
-applyPan :: Int -> Int16 -> (Int16, Int16)
+adjustLimits :: Ord a => a -> a -> a -> a
+adjustLimits down up val
+  | val < down = down
+  | val > up   = up
+  | otherwise  = val
+
+
+applyPan :: Int -> Float -> (Float, Float)
 applyPan p s =
-  ((15-fromIntegral p) * s `div` 15, (fromIntegral p*s) `div` 15)
-  
+  ((15-fromIntegral p) * s / 15, (fromIntegral p*s) / 15)
 
 
 note2freq :: Int -> Int
@@ -322,3 +368,4 @@ apply2 f (x, y) (z, t) = (f x z, f y t)
 
 dupe :: a -> (a, a)
 dupe x = (x, x)
+
