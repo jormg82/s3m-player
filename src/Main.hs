@@ -15,8 +15,8 @@ main = do
   header <- loadFile $ P.file params
 
   if P.outInfo params then
-    TIO.putStr $ headerReport header
-    --print header
+    do TIO.putStr $ headerReport header
+       --print header
   else
     playFile header
 

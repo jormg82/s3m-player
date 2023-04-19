@@ -9,13 +9,16 @@ module Header(
   Row,
   Note(..),
   Instrument(..),
-  Header(..)
+  Header(..),
+  word82int16,
+  int162word8
 ) where
 
 
 import qualified Data.Array as A
 import qualified Data.Map as M
 import Data.Text(Text)
+import Data.Int
 import Data.Word
 
 
@@ -62,7 +65,7 @@ data Instrument = Instrument
     looped        :: Bool,
     c2spd         :: Int,
     sampleName    :: Text,
-    buffer        :: A.Array Int Word8
+    buffer        :: A.Array Int Int16
   }
   deriving Show
 
@@ -89,4 +92,13 @@ data Header = Header
     patterns       :: M.Map Int Pattern
   }
   deriving Show
+
+
+-- Expandimos 
+word82int16 :: Word8 -> Int16
+word82int16 n = (fromIntegral n - 0x80) * 16
+
+
+int162word8 :: Int16 -> Word8
+int162word8 n = fromIntegral (n `div` 64) + 0x80
 

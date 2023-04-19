@@ -6,7 +6,7 @@ module HeaderReport(headerReport) where
 import Header
 
 import Colonnade
-import Data.Char(toUpper)
+import Data.Char(chr, ord, toUpper)
 import Data.List(sort, sortOn)
 import Fmt
 import qualified Data.Map as M
@@ -108,30 +108,21 @@ showNoteVol :: Maybe Int -> String
 showNoteVol Nothing  = "--"
 showNoteVol (Just i) = justifyLeft 2 '0' (map toUpper $ showHex i "")
 
--- OJO CORREGIR, esto esta mal, solo hay un efecto S, el numero que va detras es
--- parametro
-effectTable :: [String]
-effectTable = ["A","B","C","D","E","F","G","H","I","J","K","L","M","N",
-               "O", "P", "Q", "R", "S0", "S1", "S2","S3","S4","S5",
-               "S6","S7","S8","S9","SA","SB","SC","SD","SE","SF","T",
-               "U","V","W","X","Y","Z"]
 
 showNoteEffect :: Maybe Int -> Maybe Int -> String
-showNoteEffect Nothing Nothing   = "----"
+showNoteEffect Nothing Nothing   = "---"
 showNoteEffect Nothing (Just p)  =
-  "--" ++ justifyLeft 2 '0' (map toUpper $ showHex p "")
-showNoteEffect (Just e) Nothing  =
-  justifyLeft 2 '0' (effectTable!!(e-1)) ++ "--"
+  '-':justifyLeft 2 '0' (map toUpper $ showHex p "")
+showNoteEffect (Just e) Nothing  = chr (ord 'A'+e-1):"--"
 showNoteEffect (Just e) (Just p) =
-  justifyLeft 2 '0' (effectTable!!(e-1)) ++
-  justifyLeft 2 '0' (map toUpper $ showHex p "")
+  chr (ord 'A'+e-1): justifyLeft 2 '0' (map toUpper $ showHex p "")
 
 
 showNoteInfo :: Maybe Note -> String
-showNoteInfo Nothing = "--- -- -- ----"
-showNoteInfo (Just Note{..}) = showNoteName note ++ " " ++
-                               showNoteInstrument instrument ++ " " ++
-                               showNoteVol noteVol ++ " " ++
+showNoteInfo Nothing = "----------"
+showNoteInfo (Just Note{..}) = showNoteName note ++
+                               showNoteInstrument instrument ++
+                               showNoteVol noteVol ++
                                showNoteEffect effect effectParam
 
 

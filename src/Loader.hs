@@ -190,7 +190,7 @@ setDefaultPan dic ps =
 loadInstruments :: [Int] -> Get InstrumentDic
 loadInstruments ptrs = do
   is <- traverse loadInstrument ptrs
-  return $ M.fromList $ zip [0..] is
+  return $ M.fromList $ zip [1..] is
 
 
 loadInstrument :: Int -> Get Instrument
@@ -256,7 +256,7 @@ loadInstrument ptr = do
     skip $ memSeg ins
 
     let len = sampleLength ins
-    ds <- replicateM len getWord8
+    ds <- map word82int16 <$> replicateM len getWord8
     return ins{buffer=A.array (0, len-1) $ zip [0..] ds}
 
 
